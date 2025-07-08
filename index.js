@@ -50,6 +50,117 @@ async function run() {
         };
 
 
+        // POST /classes
+        app.post('/classes', verifyFBToken, async (req, res) => {
+            const newClass = req.body;
+            const result = await classesCollection.insertOne(newClass);
+            res.send(result);
+        });
+        // GET /my-classes?email=
+        app.get('/my-classes', verifyFBToken, async (req, res) => {
+            const email = req.query.email;
+            try {
+                const result = await classesCollection.find({ teacherEmail: email }).toArray();
+                res.send(result);
+            } catch (err) {
+                console.error('Error fetching classes:', err);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        app.patch('/my-classes/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) return res.status(400).send({ message: 'Invalid ID' });
+
+            const { name, image, price, seats, description, category } = req.body;
+
+            try {
+                const result = await classesCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            name,
+                            image,
+                            price,
+                            seats,
+                            description,
+                            category,
+                            status: 'pending', // re-pending if updated
+                            updatedAt: new Date()
+                        }
+                    }
+                );
+
+                res.send({ modifiedCount: result.modifiedCount });
+            } catch (err) {
+                console.error('Update error:', err);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        app.delete('/my-classes/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+
+            if (!ObjectId.isValid(id)) return res.status(400).send({ message: 'Invalid ID' });
+
+            try {
+                const result = await classesCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send({ deletedCount: result.deletedCount });
+            } catch (err) {
+                console.error('Delete error:', err);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+
+
+        // ✅ GET: Admin fetch pending classes
+        app.get('/admin/pending-classes', verifyFBToken, async (req, res) => {
+            try {
+                const pending = await classesCollection.find({ status: 'pending' }).toArray();
+                res.send(pending);
+            } catch (err) {
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        // ✅ PATCH: Admin approve a class
+        app.patch('/admin/approve-class/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await classesCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: 'approved' } }
+                );
+                res.send({ modifiedCount: result.modifiedCount });
+            } catch (err) {
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        // GET /classes/approved - Public route to fetch all approved classes
+        app.get('/classes/approved', async (req, res) => {
+            try {
+                const approved = await classesCollection.find({ status: 'approved' }).toArray();
+                res.send(approved);
+            } catch (err) {
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        // GET /classes/approved/:id - Get approved class by ID
+        app.get('/classes/approved/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const classDoc = await classesCollection.findOne({ _id: new ObjectId(id), status: 'approved' });
+                if (!classDoc) return res.status(404).send({ message: 'Class not found or not approved' });
+                res.send(classDoc);
+            } catch (error) {
+                console.error('Error fetching class:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+
+
+
+
+
+
 
         // Get user role by email
         app.get('/users/:email/role', verifyFBToken, async (req, res) => {
@@ -84,10 +195,6 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-
-
-
-
         // USERS
         app.post('/users', async (req, res) => {
             const user = req.body;
