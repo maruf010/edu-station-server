@@ -38,6 +38,7 @@ async function run() {
         const feedbacksCollection = db.collection("feedbacks");
         const paymentsCollection = db.collection("payments");
 
+
         // Middleware to verify Firebase token
         const verifyFBToken = async (req, res, next) => {
             const authHeader = req.headers.authorization;
@@ -289,6 +290,14 @@ async function run() {
                 console.error('Error making admin:', error);
                 res.status(500).send({ message: 'Internal server error' });
             }
+        });
+        app.patch('/users/remove-admin/:id', async (req, res) => {
+            const { id } = req.params;
+            const result = await usersCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role: 'student' } }
+            );
+            res.send(result);
         });
 
         app.post('/users', async (req, res) => {
