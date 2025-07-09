@@ -37,6 +37,7 @@ async function run() {
         const enrollmentsCollection = db.collection("enrollments");
         const feedbacksCollection = db.collection("feedbacks");
         const paymentsCollection = db.collection("payments");
+        const wishlistCollection = db.collection("wishlist");
 
 
         // Middleware to verify Firebase token
@@ -77,9 +78,19 @@ async function run() {
         // POST /payments
         app.post('/payments', verifyFBToken, async (req, res) => {
             const payment = req.body;
+            const { classId, userEmail } = payment;
+
             try {
+                // ✅ Check if already enrolled
+                const alreadyEnrolled = await paymentsCollection.findOne({ classId, userEmail });
+                if (alreadyEnrolled) {
+                    return res.status(400).send({ message: 'You have already enrolled in this class.' });
+                }
+
+                // ✅ If not enrolled, proceed to insert
                 const result = await paymentsCollection.insertOne(payment);
                 res.send(result);
+
             } catch (err) {
                 console.error('Error saving payment:', err);
                 res.status(500).send({ message: 'Failed to save payment record' });
@@ -113,8 +124,54 @@ async function run() {
         });
 
 
+        // ✅ Add this endpoint to your backend (e.g., near the other `/stats` or `/users` endpoints)
+        app.get('/stats/summary', async (req, res) => {
+            try {
+                const users = await usersCollection.countDocuments();
+                const classes = await classesCollection.countDocuments({ status: 'approved' });
+                const enrollments = await paymentsCollection.countDocuments();
+                const teachers = await usersCollection.countDocuments({ role: 'teacher' });
 
-        // POST /enrollments
+                res.send({ users, classes, enrollments, teachers });
+            } catch (error) {
+                console.error('Error fetching performance stats:', error);
+                res.status(500).send({ message: 'Failed to fetch stats' });
+            }
+        });
+
+        app.post('/wishlist', verifyFBToken, async (req, res) => {
+            const item = req.body;
+
+            // Check if user already enrolled
+            const enrolled = await paymentsCollection.findOne({ classId: item.classId, userEmail: item.userEmail });
+            if (enrolled) return res.status(400).send({ message: 'Already enrolled in this class.' });
+
+
+            // Check if already in wishlist
+            const existing = await wishlistCollection.findOne({ classId: item.classId, userEmail: item.userEmail });
+            if (existing) return res.status(400).send({ message: 'Already in wishlist' });
+
+            const result = await wishlistCollection.insertOne(item);
+            res.send(result);
+        });
+
+        // GET /wishlist?email=
+        app.get('/wishlist', verifyFBToken, async (req, res) => {
+            const email = req.query.email;
+            if (!email) return res.status(400).send({ message: 'Email required' });
+
+            const result = await wishlistCollection.find({ userEmail: email }).toArray();
+            res.send(result);
+        });
+        // DELETE /wishlist/:id
+        app.delete('/wishlist/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+            const result = await wishlistCollection.deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
+
+
+
         app.post('/enrollments', async (req, res) => {
             const enrollment = req.body;
             const classId = enrollment.classId;
@@ -122,16 +179,23 @@ async function run() {
             // Save enrollment
             const result = await enrollmentsCollection.insertOne(enrollment);
 
-            // Update class seat count and enrolled number
+            // ✅ Update class seat count and enrolled number
             await classesCollection.updateOne(
                 { _id: new ObjectId(classId) },
                 {
                     $inc: { enrolled: 1, seats: -1 }
                 }
             );
+            const classDoc = await classesCollection.findOne({ _id: new ObjectId(classId) });
+            if (!classDoc || classDoc.seats <= 0) {
+                return res.status(400).send({ message: 'No available seats.' });
+            }
+
 
             res.send(result);
         });
+
+
         // GET /enrollments?email=student@example.com
         app.get('/enrollments', async (req, res) => {
             const email = req.query.email;
@@ -161,8 +225,6 @@ async function run() {
 
             res.send(feedbacks);
         });
-
-
 
 
 
