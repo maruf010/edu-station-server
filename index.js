@@ -5,6 +5,7 @@ const admin = require("firebase-admin");
 const app = express();
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 app.use(cors());
 app.use(express.json());
@@ -33,8 +34,11 @@ async function run() {
         const teacherRequestsCollection = db.collection("teacherRequests");
         const teachersCollection = db.collection("teachers");
         const classesCollection = db.collection("classes");
+        const enrollmentsCollection = db.collection("enrollments");
+        const feedbacksCollection = db.collection("feedbacks");
+        const paymentsCollection = db.collection("payments");
 
-
+        // Middleware to verify Firebase token
         const verifyFBToken = async (req, res, next) => {
             const authHeader = req.headers.authorization;
             if (!authHeader) return res.status(401).send({ message: 'unauthorized access' });
@@ -50,13 +54,123 @@ async function run() {
         };
 
 
-        // POST /classes
+
+        // POST /create-payment-intent
+        app.post('/create-payment-intent', async (req, res) => {
+            const { price } = req.body;
+
+            if (!price || price <= 0) {
+                return res.status(400).send({ error: 'Invalid price' });
+            }
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: price * 100, // Stripe works in cents
+                currency: 'usd',
+                payment_method_types: ['card']
+            });
+
+            res.send({
+                clientSecret: paymentIntent.client_secret
+            });
+        });
+        // POST /payments
+        app.post('/payments', verifyFBToken, async (req, res) => {
+            const payment = req.body;
+            try {
+                const result = await paymentsCollection.insertOne(payment);
+                res.send(result);
+            } catch (err) {
+                console.error('Error saving payment:', err);
+                res.status(500).send({ message: 'Failed to save payment record' });
+            }
+        });
+        // ✅ Unified GET /payments (supports admin + student)
+        app.get('/payments', verifyFBToken, async (req, res) => {
+            const email = req.query.email;
+            const decodedEmail = req.decoded?.email;
+
+            try {
+                // If an email is provided, and it matches the token (student mode)
+                if (email && email === decodedEmail) {
+                    const payments = await paymentsCollection
+                        .find({ userEmail: email })
+                        .sort({ date: -1 })
+                        .toArray();
+                    return res.send(payments);
+                }
+
+                // If no email provided, assume it's admin
+                const payments = await paymentsCollection
+                    .find()
+                    .sort({ date: -1 })
+                    .toArray();
+                return res.send(payments);
+            } catch (error) {
+                console.error('Error fetching payments:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+
+
+
+        // POST /enrollments
+        app.post('/enrollments', async (req, res) => {
+            const enrollment = req.body;
+            const classId = enrollment.classId;
+
+            // Save enrollment
+            const result = await enrollmentsCollection.insertOne(enrollment);
+
+            // Update class seat count and enrolled number
+            await classesCollection.updateOne(
+                { _id: new ObjectId(classId) },
+                {
+                    $inc: { enrolled: 1, seats: -1 }
+                }
+            );
+
+            res.send(result);
+        });
+        // GET /enrollments?email=student@example.com
+        app.get('/enrollments', async (req, res) => {
+            const email = req.query.email;
+            if (!email) return res.status(400).send({ error: 'Email is required' });
+
+            const result = await enrollmentsCollection.find({ userEmail: email }).toArray();
+            res.send(result);
+        });
+
+
+
+        // POST /feedbacks
+        app.post('/feedbacks', async (req, res) => {
+            const feedback = req.body;
+            const result = await feedbacksCollection.insertOne(feedback);
+            res.send(result);
+        });
+        // GET /feedbacks
+        app.get('/feedbacks', async (req, res) => {
+            const classId = req.query.classId;
+
+            const query = classId ? { classId } : {};
+            const feedbacks = await feedbacksCollection
+                .find(query)
+                .sort({ createdAt: -1 }) // newest first
+                .toArray();
+
+            res.send(feedbacks);
+        });
+
+
+
+
+
         app.post('/classes', verifyFBToken, async (req, res) => {
             const newClass = req.body;
             const result = await classesCollection.insertOne(newClass);
             res.send(result);
         });
-        // GET /my-classes?email=
+
         app.get('/my-classes', verifyFBToken, async (req, res) => {
             const email = req.query.email;
             try {
@@ -67,13 +181,12 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
+
         app.patch('/my-classes/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
-
             if (!ObjectId.isValid(id)) return res.status(400).send({ message: 'Invalid ID' });
 
             const { name, image, price, seats, description, category } = req.body;
-
             try {
                 const result = await classesCollection.updateOne(
                     { _id: new ObjectId(id) },
@@ -85,23 +198,21 @@ async function run() {
                             seats,
                             description,
                             category,
-                            status: 'pending', // re-pending if updated
+                            status: 'pending',
                             updatedAt: new Date()
                         }
                     }
                 );
-
                 res.send({ modifiedCount: result.modifiedCount });
             } catch (err) {
                 console.error('Update error:', err);
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
+
         app.delete('/my-classes/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
-
             if (!ObjectId.isValid(id)) return res.status(400).send({ message: 'Invalid ID' });
-
             try {
                 const result = await classesCollection.deleteOne({ _id: new ObjectId(id) });
                 res.send({ deletedCount: result.deletedCount });
@@ -111,8 +222,6 @@ async function run() {
             }
         });
 
-
-        // ✅ GET: Admin fetch pending classes
         app.get('/admin/pending-classes', verifyFBToken, async (req, res) => {
             try {
                 const pending = await classesCollection.find({ status: 'pending' }).toArray();
@@ -121,7 +230,7 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        // ✅ PATCH: Admin approve a class
+
         app.patch('/admin/approve-class/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
             try {
@@ -134,7 +243,7 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        // GET /classes/approved - Public route to fetch all approved classes
+
         app.get('/classes/approved', async (req, res) => {
             try {
                 const approved = await classesCollection.find({ status: 'approved' }).toArray();
@@ -143,7 +252,7 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        // GET /classes/approved/:id - Get approved class by ID
+
         app.get('/classes/approved/:id', async (req, res) => {
             const id = req.params.id;
             try {
@@ -156,35 +265,21 @@ async function run() {
             }
         });
 
-
-
-
-
-
-
-        // Get user role by email
         app.get('/users/:email/role', verifyFBToken, async (req, res) => {
             const email = req.params.email;
-
             try {
                 const user = await usersCollection.findOne({ email });
-                if (!user) {
-                    // User not found, return default role 'user'
-                    return res.send({ role: 'user' });
-                }
-                // Return user role or default to 'user' if role field missing
+                if (!user) return res.send({ role: 'user' });
                 res.send({ role: user.role || 'user' });
             } catch (error) {
                 console.error('Error fetching user role:', error);
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        // PATCH update user role to admin by ID
+
         app.patch('/users/make-admin/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
-
             try {
-                // Update the user's role to admin
                 const result = await usersCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: { role: 'admin' } }
@@ -195,34 +290,32 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        // USERS
+
         app.post('/users', async (req, res) => {
             const user = req.body;
             const result = await usersCollection.insertOne(user);
             res.send(result);
         });
+
         app.get('/users', verifyFBToken, async (req, res) => {
             const users = await usersCollection.find().toArray();
             res.send(users);
         });
+
         app.delete('/users/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
             const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
             res.send({ deletedCount: result.deletedCount });
         });
 
-
-
-
-        // TEACHER REQUESTS
         app.post('/teacherRequests', verifyFBToken, async (req, res) => {
             const request = req.body;
             const existing = await teacherRequestsCollection.findOne({ email: request.email });
             if (existing) return res.status(400).send({ message: 'Request already exists' });
-
             const result = await teacherRequestsCollection.insertOne(request);
             res.send(result);
         });
+
         app.get('/teachers', verifyFBToken, async (req, res) => {
             try {
                 const teachers = await teachersCollection.find({ role: 'teacher' }).toArray();
@@ -232,54 +325,51 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        // Deactivate teacher: remove from teachers collection and update role to "student"
+
         app.patch('/teachers/deactivate/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
-
             try {
-                // Find teacher doc by _id
                 const teacher = await teachersCollection.findOne({ _id: new ObjectId(id) });
                 if (!teacher) return res.status(404).send({ message: 'Teacher not found' });
-
-                // Update user role to student
                 const updateUser = await usersCollection.updateOne(
                     { email: teacher.email },
                     { $set: { role: 'student' } }
                 );
-
-                // Remove teacher from teachers collection
                 const removeTeacher = await teachersCollection.deleteOne({ _id: new ObjectId(id) });
-
                 res.send({ modifiedCount: removeTeacher.deletedCount });
             } catch (error) {
                 console.error('Error deactivating teacher:', error);
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
+
         app.get('/teacherRequests/:email', verifyFBToken, async (req, res) => {
             const email = req.params.email;
             const request = await teacherRequestsCollection.findOne({ email });
             res.send(request);
         });
+
         app.get('/teacherRequests', verifyFBToken, async (req, res) => {
             const result = await teacherRequestsCollection.find({ status: { $in: ['pending', 'rejected'] } }).toArray();
             res.send(result);
         });
+
         app.patch('/teacherRequests/approve/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
-            const request = await teacherRequestsCollection.findOne({ _id: new ObjectId(id) });
-            if (!request) return res.status(404).send({ message: "Request not found" });
+            try {
+                const request = await teacherRequestsCollection.findOne({ _id: new ObjectId(id) });
+                if (!request) return res.status(404).send({ message: "Request not found" });
 
-            // Update user role
-            const updateUser = await usersCollection.updateOne(
-                { email: request.email },
-                { $set: { role: 'teacher' } }
-            );
+                const updateStatus = await teacherRequestsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: 'accepted' } }
+                );
 
-            // Only add to teachers collection if user role is now 'teacher'
-            const updatedUser = await usersCollection.findOne({ email: request.email });
-            if (updatedUser.role === 'teacher') {
-                // Check if already in teachers collection to avoid duplicates
+                const updateUser = await usersCollection.updateOne(
+                    { email: request.email },
+                    { $set: { role: 'teacher' } }
+                );
+
                 const existingTeacher = await teachersCollection.findOne({ email: request.email });
                 if (!existingTeacher) {
                     await teachersCollection.insertOne({
@@ -293,12 +383,14 @@ async function run() {
                         joinedAt: new Date()
                     });
                 }
+
+                await teacherRequestsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                res.send({ success: true });
+            } catch (error) {
+                console.error("Approve error:", error);
+                res.status(500).send({ message: "Internal server error" });
             }
-
-            // Delete from teacherRequests collection
-            await teacherRequestsCollection.deleteOne({ _id: new ObjectId(id) });
-
-            res.send({ success: true });
         });
 
         app.patch('/teacherRequests/reject/:id', verifyFBToken, async (req, res) => {
@@ -309,6 +401,7 @@ async function run() {
             );
             res.send({ modifiedCount: result.modifiedCount });
         });
+
         app.patch('/teacherRequests/reapply/:email', verifyFBToken, async (req, res) => {
             const email = req.params.email;
             const result = await teacherRequestsCollection.updateOne(
@@ -317,7 +410,6 @@ async function run() {
             );
             res.send({ modifiedCount: result.modifiedCount });
         });
-
 
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
