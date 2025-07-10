@@ -38,7 +38,7 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
 
-        await client.connect();
+        // await client.connect();
 
         const db = client.db("eduStationDB");
         const usersCollection = db.collection("users");
@@ -389,7 +389,7 @@ async function run() {
         });
 
 
-        app.get('/admin/pending-classes', verifyAdmin, verifyFBToken, async (req, res) => {
+        app.get('/admin/pending-classes', verifyFBToken, async (req, res) => {
             try {
                 const pending = await classesCollection.find({ status: 'pending' }).toArray();
                 res.send(pending);
@@ -398,7 +398,7 @@ async function run() {
             }
         });
         //pending classes approve
-        app.patch('/admin/approve-class/:id', verifyAdmin, verifyFBToken, async (req, res) => {
+        app.patch('/admin/approve-class/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
             try {
                 const result = await classesCollection.updateOne(
@@ -453,7 +453,7 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        app.patch('/users/remove-admin/:id', verifyAdmin, verifyFBToken, async (req, res) => {
+        app.patch('/users/remove-admin/:id', verifyFBToken, async (req, res) => {
             const { id } = req.params;
             const result = await usersCollection.updateOne(
                 { _id: new ObjectId(id) },
