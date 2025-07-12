@@ -311,13 +311,39 @@ async function run() {
 
 
 
-        // POST /feedbacks
         app.post('/feedbacks', async (req, res) => {
             const feedback = req.body;
-            const result = await feedbacksCollection.insertOne(feedback);
-            res.send(result);
+            const { classId, studentEmail } = feedback;
+
+            try {
+                // ✅ Confirm student is enrolled in the class
+                const isEnrolled = await enrollmentsCollection.findOne({
+                    classId,
+                    userEmail: studentEmail
+                });
+
+                if (!isEnrolled) {
+                    return res.status(403).send({ message: 'You must be enrolled in this class to give feedback.' });
+                }
+
+                // ✅ Check for existing feedback from same user for this class
+                const existingFeedback = await feedbacksCollection.findOne({ classId, studentEmail });
+
+                if (existingFeedback) {
+                    return res.status(400).send({ message: 'You have already submitted feedback for this class.' });
+                }
+
+                feedback.createdAt = new Date();
+                const result = await feedbacksCollection.insertOne(feedback);
+
+                res.send(result);
+            } catch (error) {
+                console.error('Feedback insert error:', error);
+                res.status(500).send({ message: 'Something went wrong' });
+            }
         });
-        // GET /feedbacks
+
+        // GET /feedbacks details and home page
         app.get('/feedbacks', async (req, res) => {
             const classId = req.query.classId;
 
@@ -329,10 +355,111 @@ async function run() {
 
             res.send(feedbacks);
         });
+        // GET: All feedbacks by a student in my enroll class
+        app.get('/feedback', async (req, res) => {
+            const email = req.query.email;
+            if (!email) return res.status(400).send({ message: 'Email is required' });
+
+            const feedbacks = await feedbacksCollection.find({ studentEmail: email }).toArray();
+            res.send(feedbacks);
+        });
+
+        app.patch('/feedbacks/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+            const { feedback, rating } = req.body;
+            const email = req.decoded.email;
+
+            try {
+                const existing = await feedbacksCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!existing) return res.status(404).send({ message: 'Feedback not found' });
+                if (existing.studentEmail !== email) {
+                    return res.status(403).send({ message: 'You can only update your own feedback' });
+                }
+
+                const result = await feedbacksCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            feedback,
+                            rating,
+                            updatedAt: new Date()
+                        }
+                    }
+                );
+
+                res.send(result);
+            } catch (error) {
+                console.error('Update feedback error:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        // app.delete('/feedbacks/:id', verifyFBToken, async (req, res) => {
+        //     const id = req.params.id;
+        //     const email = req.decoded.email;
+
+        //     try {
+        //         const feedback = await feedbacksCollection.findOne({ _id: new ObjectId(id) });
+
+        //         if (!feedback) return res.status(404).send({ message: 'Feedback not found' });
+        //         if (feedback.studentEmail !== email) {
+        //             return res.status(403).send({ message: 'You can only delete your own feedback' });
+        //         }
+
+        //         const result = await feedbacksCollection.deleteOne({ _id: new ObjectId(id) });
+        //         res.send(result);
+        //     } catch (error) {
+        //         console.error('Delete feedback error:', error);
+        //         res.status(500).send({ message: 'Internal server error' });
+        //     }
+        // });
+
 
 
 
         //teachers
+
+        // DELETE /feedbacks/:id
+        app.delete('/feedbacks/:id', verifyFBToken, async (req, res) => {
+            const { id } = req.params;
+
+            if (!ObjectId.isValid(id)) {
+                return res.status(400).json({ message: 'Invalid feedback ID' });
+            }
+
+            try {
+                const feedback = await feedbacksCollection.findOne({ _id: new ObjectId(id) });
+                if (!feedback) {
+                    return res.status(404).json({ message: 'Feedback not found' });
+                }
+
+                const requesterEmail = req.decoded.email;
+
+                // Get user from usersCollection
+                const user = await usersCollection.findOne({ email: requesterEmail });
+
+                // Check if the user is either the feedback owner or an admin
+                const isOwner = requesterEmail === feedback.studentEmail;
+                const isAdmin = user?.role === 'admin';
+
+                if (!isOwner && !isAdmin) {
+                    return res.status(403).json({ message: 'Forbidden: Not allowed to delete this feedback' });
+                }
+
+                const result = await feedbacksCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 0) {
+                    return res.status(500).json({ message: 'Failed to delete feedback' });
+                }
+
+                res.json({ message: 'Feedback deleted successfully' });
+            } catch (error) {
+                console.error('Delete feedback error:', error);
+                res.status(500).json({ message: 'Internal server error' });
+            }
+        });
+
+
         app.post('/classes', verifyFBToken, async (req, res) => {
             const newClass = req.body;
             const result = await classesCollection.insertOne(newClass);
