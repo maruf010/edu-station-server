@@ -203,6 +203,19 @@ async function run() {
                 res.status(500).json({ message: 'Failed to update submission' });
             }
         });
+        app.patch('/submissions/viewed/:id', async (req, res) => {
+            const id = req.params.id;
+            const { viewedHash } = req.body;
+
+            const result = await submissionsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { viewedHash: viewedHash } }
+            );
+
+            res.send(result);
+        });
+
+
 
 
 
