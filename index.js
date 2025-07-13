@@ -49,6 +49,8 @@ async function run() {
         const feedbacksCollection = db.collection("feedbacks");
         const paymentsCollection = db.collection("payments");
         const wishlistCollection = db.collection("wishlist");
+        const assignmentsCollection = db.collection("assignments");
+        const submissionsCollection = db.collection("submissions");
 
 
         // Middleware to verify Firebase token
@@ -91,6 +93,118 @@ async function run() {
             }
             next();
         }
+
+
+        // teacher post assignment
+        app.post('/assignments', verifyFBToken, verifyTeacher, async (req, res) => {
+            const assignment = req.body;
+
+            if (!assignment.classId || !assignment.title || !assignment.deadline || !assignment.description) {
+                return res.status(400).send({ message: 'Missing required fields' });
+            }
+
+            assignment.createdAt = new Date();
+
+            try {
+                const result = await assignmentsCollection.insertOne(assignment);
+                res.send(result);
+            } catch (err) {
+                console.error('Error creating assignment:', err);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        app.get('/classes/:id/summary', verifyFBToken, verifyTeacher, async (req, res) => {
+            const classId = req.params.id;
+
+            try {
+                const [enrollments, totalAssignments, totalSubmissions] = await Promise.all([
+                    paymentsCollection.countDocuments({ classId }),
+                    assignmentsCollection.countDocuments({ classId }),
+                    submissionsCollection.countDocuments({ classId })
+                ]);
+
+                res.send({
+                    enrollments,
+                    totalAssignments,
+                    totalSubmissions
+                });
+            } catch (error) {
+                console.error('Error fetching class summary:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+
+
+        app.get('/assignments/:classId', verifyFBToken, async (req, res) => {
+            const classId = req.params.classId;
+
+            try {
+                const assignments = await assignmentsCollection
+                    .find({ classId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(assignments);
+            } catch (error) {
+                console.error('Error fetching assignments:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+
+
+        app.post('/submissions', verifyFBToken, async (req, res) => {
+            const data = req.body;
+            data.submittedAt = new Date();
+            const result = await submissionsCollection.insertOne(data);
+            res.send(result);
+        });
+
+        app.get('/submissions', async (req, res) => {
+            const { email, classId } = req.query;
+
+            if (!email || !classId) {
+                return res.status(400).json({ message: "Missing email or classId" });
+            }
+
+            const submissions = await submissionsCollection
+                .find({ studentEmail: email, classId })
+                .toArray();
+
+            res.send(submissions);
+        });
+        app.get('/submissions/by-assignment/:assignmentId', async (req, res) => {
+            const { assignmentId } = req.params;
+            try {
+                const submissions = await submissionsCollection
+                    .find({ assignmentId })
+                    .toArray();
+                res.json(submissions);
+            } catch (err) {
+                res.status(500).json({ message: 'Failed to fetch submissions' });
+            }
+        });
+
+        app.patch('/submissions/:id', async (req, res) => {
+            const { id } = req.params;
+            const { marks, review } = req.body;
+
+            try {
+                const result = await submissionsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            marks: parseFloat(marks),
+                            review: review || ''
+                        }
+                    }
+                );
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ message: 'Failed to update submission' });
+            }
+        });
+
+
 
 
 
@@ -567,7 +681,7 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-        app.patch('/users/make-admin/:id', verifyAdmin, verifyFBToken, async (req, res) => {
+        app.patch('/users/make-admin/:id', verifyFBToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             try {
                 const result = await usersCollection.updateOne(
