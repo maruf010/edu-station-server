@@ -96,23 +96,50 @@ async function run() {
 
 
         // teacher post assignment
-        app.post('/assignments', verifyFBToken, verifyTeacher, async (req, res) => {
-            const assignment = req.body;
+        // app.post('/assignments', verifyFBToken, verifyTeacher, async (req, res) => {
+        //     const assignment = req.body;
 
-            if (!assignment.classId || !assignment.title || !assignment.deadline || !assignment.description) {
-                return res.status(400).send({ message: 'Missing required fields' });
-            }
+        //     if (!assignment.classId || !assignment.title || !assignment.deadline || !assignment.description) {
+        //         return res.status(400).send({ message: 'Missing required fields' });
+        //     }
 
-            assignment.createdAt = new Date();
+        //     assignment.createdAt = new Date();
 
+        //     try {
+        //         const result = await assignmentsCollection.insertOne(assignment);
+        //         res.send(result);
+        //     } catch (err) {
+        //         console.error('Error creating assignment:', err);
+        //         res.status(500).send({ message: 'Internal server error' });
+        //     }
+        // });
+        app.post('/assignments', async (req, res) => {
             try {
-                const result = await assignmentsCollection.insertOne(assignment);
-                res.send(result);
-            } catch (err) {
-                console.error('Error creating assignment:', err);
-                res.status(500).send({ message: 'Internal server error' });
+                const assignment = req.body;
+
+                // Ensure required fields are present
+                if (!assignment.title || !assignment.deadline || !assignment.description || !assignment.classId) {
+                    return res.status(400).json({ message: 'Missing required fields' });
+                }
+
+                // ✅ Optional but good: Ensure className exists if sent
+                assignment.className = assignment.className || "Unknown";
+
+                // Save to DB
+                const result = await assignmentsCollection.insertOne({
+                    ...assignment,
+                    createdAt: new Date()
+                });
+
+                res.status(201).json(result);
+            } catch (error) {
+                console.error('Error creating assignment:', error);
+                res.status(500).json({ message: 'Internal server error' });
             }
         });
+
+
+
         app.get('/classes/:id/summary', verifyFBToken, verifyTeacher, async (req, res) => {
             const classId = req.params.id;
 
@@ -133,23 +160,40 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-
-
-        app.get('/assignments/:classId', verifyFBToken, async (req, res) => {
+        // GET /assignments/:classId
+        app.get('/assignments/:classId', async (req, res) => {
             const classId = req.params.classId;
+            const result = await assignmentsCollection
+                .find({ classId })
+                .toArray();
 
-            try {
-                const assignments = await assignmentsCollection
-                    .find({ classId })
-                    .sort({ createdAt: -1 })
-                    .toArray();
+            // Optional: count submissions per assignment
+            const assignmentsWithCounts = await Promise.all(
+                result.map(async (assignment) => {
+                    const count = await submissionsCollection.countDocuments({ assignmentId: assignment._id.toString() });
+                    return { ...assignment, totalSubmissions: count };
+                })
+            );
 
-                res.send(assignments);
-            } catch (error) {
-                console.error('Error fetching assignments:', error);
-                res.status(500).send({ message: 'Internal server error' });
-            }
+            res.send(assignmentsWithCounts);
         });
+
+
+        // app.get('/assignments/:classId', verifyFBToken, async (req, res) => {
+        //     const classId = req.params.classId;
+
+        //     try {
+        //         const assignments = await assignmentsCollection
+        //             .find({ classId })
+        //             .sort({ createdAt: -1 })
+        //             .toArray();
+
+        //         res.send(assignments);
+        //     } catch (error) {
+        //         console.error('Error fetching assignments:', error);
+        //         res.status(500).send({ message: 'Internal server error' });
+        //     }
+        // });
 
 
         app.post('/submissions', verifyFBToken, async (req, res) => {
@@ -592,6 +636,21 @@ async function run() {
             const result = await classesCollection.insertOne(newClass);
             res.send(result);
         });
+        app.get('/class/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const classData = await classesCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!classData) {
+                    return res.status(404).json({ message: 'Class not found' });
+                }
+
+                res.json(classData);
+            } catch (error) {
+                console.error('Error fetching class:', error);
+                res.status(500).json({ message: 'Server error' });
+            }
+        });
         app.get('/my-classes', verifyFBToken, async (req, res) => {
             const email = req.query.email;
             try {
@@ -651,6 +710,7 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
+
         //pending classes approve
         app.patch('/admin/approve-class/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
@@ -718,11 +778,32 @@ async function run() {
 
 
 
+        //duplication email is not save in database
         app.post('/users', async (req, res) => {
             const user = req.body;
-            const result = await usersCollection.insertOne(user);
-            res.send(result);
+
+            try {
+                // 👇 Check if user already exists by email
+                const existingUser = await usersCollection.findOne({ email: user.email });
+
+                if (existingUser) {
+                    return res.status(200).send({ message: 'User already exists', alreadyExists: true });
+                }
+
+                // 👇 If not exists, insert
+                const result = await usersCollection.insertOne(user);
+                res.status(201).send(result);
+            } catch (error) {
+                console.error('User insert error:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
         });
+
+        // app.post('/users', async (req, res) => {
+        //     const user = req.body;
+        //     const result = await usersCollection.insertOne(user);
+        //     res.send(result);
+        // });
         app.get('/users', verifyFBToken, async (req, res) => {
             const users = await usersCollection.find().toArray();
             res.send(users);
