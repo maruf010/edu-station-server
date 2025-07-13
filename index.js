@@ -179,22 +179,6 @@ async function run() {
         });
 
 
-        // app.get('/assignments/:classId', verifyFBToken, async (req, res) => {
-        //     const classId = req.params.classId;
-
-        //     try {
-        //         const assignments = await assignmentsCollection
-        //             .find({ classId })
-        //             .sort({ createdAt: -1 })
-        //             .toArray();
-
-        //         res.send(assignments);
-        //     } catch (error) {
-        //         console.error('Error fetching assignments:', error);
-        //         res.status(500).send({ message: 'Internal server error' });
-        //     }
-        // });
-
 
         app.post('/submissions', verifyFBToken, async (req, res) => {
             const data = req.body;
@@ -334,7 +318,7 @@ async function run() {
 
 
 
-        // ✅ Backend API (Express route using MongoDB aggregation)
+        // Backend API (Express route using MongoDB aggregation)
         app.get('/dashboard-summary', verifyFBToken, async (req, res) => {
             const email = req.query.email;
             const role = req.query.role; // 'admin', 'teacher', or 'student'
@@ -484,7 +468,7 @@ async function run() {
 
         app.post('/feedbacks', async (req, res) => {
             const feedback = req.body;
-            const { classId, studentEmail } = feedback;
+            const { classId, studentEmail, assignmentTitle } = feedback;
 
             try {
                 // ✅ Confirm student is enrolled in the class
@@ -497,11 +481,15 @@ async function run() {
                     return res.status(403).send({ message: 'You must be enrolled in this class to give feedback.' });
                 }
 
-                // ✅ Check for existing feedback from same user for this class
-                const existingFeedback = await feedbacksCollection.findOne({ classId, studentEmail });
+                // ✅ Check for existing feedback for this assignment
+                const existingFeedback = await feedbacksCollection.findOne({
+                    classId,
+                    studentEmail,
+                    assignmentTitle
+                });
 
                 if (existingFeedback) {
-                    return res.status(400).send({ message: 'You have already submitted feedback for this class.' });
+                    return res.status(400).send({ message: 'You already submitted feedback for this assignment.' });
                 }
 
                 feedback.createdAt = new Date();
@@ -513,6 +501,38 @@ async function run() {
                 res.status(500).send({ message: 'Something went wrong' });
             }
         });
+
+        // app.post('/feedbacks', async (req, res) => {
+        //     const feedback = req.body;
+        //     const { classId, studentEmail } = feedback;
+
+        //     try {
+        //         // ✅ Confirm student is enrolled in the class
+        //         const isEnrolled = await enrollmentsCollection.findOne({
+        //             classId,
+        //             userEmail: studentEmail
+        //         });
+
+        //         if (!isEnrolled) {
+        //             return res.status(403).send({ message: 'You must be enrolled in this class to give feedback.' });
+        //         }
+
+        //         // ✅ Check for existing feedback from same user for this class
+        //         const existingFeedback = await feedbacksCollection.findOne({ classId, studentEmail });
+
+        //         if (existingFeedback) {
+        //             return res.status(400).send({ message: 'You have already submitted feedback for this class.' });
+        //         }
+
+        //         feedback.createdAt = new Date();
+        //         const result = await feedbacksCollection.insertOne(feedback);
+
+        //         res.send(result);
+        //     } catch (error) {
+        //         console.error('Feedback insert error:', error);
+        //         res.status(500).send({ message: 'Something went wrong' });
+        //     }
+        // });
 
         // GET /feedbacks details and home page
         app.get('/feedbacks', async (req, res) => {
@@ -526,6 +546,7 @@ async function run() {
 
             res.send(feedbacks);
         });
+
         // GET: All feedbacks by a student in my enroll class
         app.get('/feedback', async (req, res) => {
             const email = req.query.email;
@@ -778,6 +799,9 @@ async function run() {
 
 
 
+
+
+
         //duplication email is not save in database
         app.post('/users', async (req, res) => {
             const user = req.body;
@@ -808,11 +832,32 @@ async function run() {
             const users = await usersCollection.find().toArray();
             res.send(users);
         });
+        // app.delete('/users/:id', verifyFBToken, async (req, res) => {
+        //     const id = req.params.id;
+        //     const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+        //     res.send({ deletedCount: result.deletedCount });
+        // });
+        // user delete also firebase and mongoDB
         app.delete('/users/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
-            const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
-            res.send({ deletedCount: result.deletedCount });
+            const email = req.query.email; // client must send the email (or uid)
+
+            try {
+                // Delete from MongoDB
+                const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+
+                // Then delete from Firebase Authentication
+                const userRecord = await admin.auth().getUserByEmail(email);
+                await admin.auth().deleteUser(userRecord.uid);
+
+                res.send({ deletedCount: result.deletedCount, firebaseDeleted: true });
+            } catch (error) {
+                console.error("Firebase deletion error:", error.message);
+                res.status(500).json({ error: 'Failed to delete user from Firebase.' });
+            }
         });
+
+
 
 
 
