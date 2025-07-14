@@ -73,7 +73,6 @@ async function run() {
             }
         };
 
-
         const verifyAdmin = async (req, res, next) => {
             const email = req.decoded.email;
             const query = { email }
@@ -93,6 +92,7 @@ async function run() {
             }
             next();
         }
+
 
 
         // teacher post assignment
@@ -138,9 +138,8 @@ async function run() {
             }
         });
 
-
-
-        app.get('/classes/:id/summary', verifyFBToken, verifyTeacher, async (req, res) => {
+        // all class summary
+        app.get('/classes/:id/summary', verifyFBToken, async (req, res) => {
             const classId = req.params.id;
 
             try {
@@ -179,14 +178,12 @@ async function run() {
         });
 
 
-
         app.post('/submissions', verifyFBToken, async (req, res) => {
             const data = req.body;
             data.submittedAt = new Date();
             const result = await submissionsCollection.insertOne(data);
             res.send(result);
         });
-
         app.get('/submissions', async (req, res) => {
             const { email, classId } = req.query;
 
@@ -211,7 +208,6 @@ async function run() {
                 res.status(500).json({ message: 'Failed to fetch submissions' });
             }
         });
-
         app.patch('/submissions/:id', async (req, res) => {
             const { id } = req.params;
             const { marks, review } = req.body;
@@ -242,10 +238,6 @@ async function run() {
 
             res.send(result);
         });
-
-
-
-
 
 
 
@@ -501,7 +493,6 @@ async function run() {
                 res.status(500).send({ message: 'Something went wrong' });
             }
         });
-
         // app.post('/feedbacks', async (req, res) => {
         //     const feedback = req.body;
         //     const { classId, studentEmail } = feedback;
@@ -546,7 +537,6 @@ async function run() {
 
             res.send(feedbacks);
         });
-
         // GET: All feedbacks by a student in my enroll class
         app.get('/feedback', async (req, res) => {
             const email = req.query.email;
@@ -555,7 +545,6 @@ async function run() {
             const feedbacks = await feedbacksCollection.find({ studentEmail: email }).toArray();
             res.send(feedbacks);
         });
-
         app.patch('/feedbacks/:id', verifyFBToken, async (req, res) => {
             const id = req.params.id;
             const { feedback, rating } = req.body;
@@ -652,7 +641,21 @@ async function run() {
         });
 
 
-        app.post('/classes', verifyFBToken, async (req, res) => {
+
+        // GET /classes (for admin - all classes with newest first)
+        app.get('/classes', verifyFBToken, verifyAdmin, async (req, res) => {
+            try {
+                const result = await classesCollection
+                    .find()
+                    .sort({ createdAt: -1 }) // newest first
+                    .toArray();
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to fetch classes' });
+            }
+        });
+
+        app.post('/classes', verifyFBToken, verifyTeacher, async (req, res) => {
             const newClass = req.body;
             const result = await classesCollection.insertOne(newClass);
             res.send(result);
@@ -721,14 +724,25 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-
-
         app.get('/admin/pending-classes', verifyFBToken, async (req, res) => {
             try {
                 const pending = await classesCollection.find({ status: 'pending' }).toArray();
                 res.send(pending);
             } catch (err) {
                 res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        // PATCH /admin/reject-class/:id
+        app.patch('/admin/reject-class/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await classesCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: 'rejected' } }
+                );
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: 'Failed to reject class' });
             }
         });
 
@@ -764,6 +778,8 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
+
+
         app.get('/users/:email/role', verifyFBToken, async (req, res) => {
             const email = req.params.email;
             try {
@@ -822,14 +838,13 @@ async function run() {
                 res.status(500).send({ message: 'Internal server error' });
             }
         });
-
         // app.post('/users', async (req, res) => {
         //     const user = req.body;
         //     const result = await usersCollection.insertOne(user);
         //     res.send(result);
         // });
         app.get('/users', verifyFBToken, async (req, res) => {
-            const users = await usersCollection.find().toArray();
+            const users = await usersCollection.find().sort({ created_at: -1 }).toArray();
             res.send(users);
         });
         // app.delete('/users/:id', verifyFBToken, async (req, res) => {
@@ -859,9 +874,6 @@ async function run() {
 
 
 
-
-
-
         app.post('/teacherRequests', verifyFBToken, async (req, res) => {
             const request = req.body;
             const existing = await teacherRequestsCollection.findOne({ email: request.email });
@@ -871,7 +883,7 @@ async function run() {
         });
         app.get('/teachers', verifyFBToken, async (req, res) => {
             try {
-                const teachers = await teachersCollection.find({ role: 'teacher' }).toArray();
+                const teachers = await teachersCollection.find({ role: 'teacher' }).sort({ joinedAt: -1 }).toArray();
                 res.send(teachers);
             } catch (error) {
                 console.error('Error fetching teachers:', error);
@@ -900,7 +912,11 @@ async function run() {
             res.send(request);
         });
         app.get('/teacherRequests', verifyFBToken, async (req, res) => {
-            const result = await teacherRequestsCollection.find({ status: { $in: ['pending', 'rejected'] } }).toArray();
+            const result = await teacherRequestsCollection.find(
+                {
+                    status: { $in: ['pending', 'rejected'] }
+                }
+            ).sort({ createdAt: -1 }).toArray();
             res.send(result);
         });
         app.patch('/teacherRequests/approve/:id', verifyFBToken, async (req, res) => {
