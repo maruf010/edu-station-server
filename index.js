@@ -138,7 +138,7 @@ async function run() {
             }
         });
 
-        // all class summary
+        // all class summary     progress
         app.get('/classes/:id/summary', verifyFBToken, async (req, res) => {
             const classId = req.params.id;
 
@@ -310,8 +310,8 @@ async function run() {
         });
 
 
-
-        // Backend API (Express route using MongoDB aggregation)
+        // Aggregation
+        //Backend API (Express route using MongoDB aggregation)
         app.get('/dashboard-summary', verifyFBToken, async (req, res) => {
             const email = req.query.email;
             const role = req.query.role; // 'admin', 'teacher', or 'student'
@@ -423,7 +423,6 @@ async function run() {
             const result = await wishlistCollection.deleteOne({ _id: new ObjectId(id) });
             res.send(result);
         });
-
 
 
         app.post('/enrollments', async (req, res) => {
@@ -655,7 +654,6 @@ async function run() {
                 res.status(500).send({ message: 'Failed to fetch classes' });
             }
         });
-
         app.post('/classes', verifyFBToken, verifyTeacher, async (req, res) => {
             const newClass = req.body;
             const result = await classesCollection.insertOne(newClass);
@@ -815,66 +813,6 @@ async function run() {
         });
 
 
-
-
-
-
-        //duplication email is not save in database
-        app.post('/users', async (req, res) => {
-            const user = req.body;
-
-            try {
-                // 👇 Check if user already exists by email
-                const existingUser = await usersCollection.findOne({ email: user.email });
-
-                if (existingUser) {
-                    return res.status(200).send({ message: 'User already exists', alreadyExists: true });
-                }
-
-                // 👇 If not exists, insert
-                const result = await usersCollection.insertOne(user);
-                res.status(201).send(result);
-            } catch (error) {
-                console.error('User insert error:', error);
-                res.status(500).send({ message: 'Internal server error' });
-            }
-        });
-        // app.post('/users', async (req, res) => {
-        //     const user = req.body;
-        //     const result = await usersCollection.insertOne(user);
-        //     res.send(result);
-        // });
-        app.get('/users', verifyFBToken, async (req, res) => {
-            const users = await usersCollection.find().sort({ created_at: -1 }).toArray();
-            res.send(users);
-        });
-        // app.delete('/users/:id', verifyFBToken, async (req, res) => {
-        //     const id = req.params.id;
-        //     const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
-        //     res.send({ deletedCount: result.deletedCount });
-        // });
-        // user delete also firebase and mongoDB
-        app.delete('/users/:id', verifyFBToken, async (req, res) => {
-            const id = req.params.id;
-            const email = req.query.email; // client must send the email (or uid)
-
-            try {
-                // Delete from MongoDB
-                const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
-
-                // Then delete from Firebase Authentication
-                const userRecord = await admin.auth().getUserByEmail(email);
-                await admin.auth().deleteUser(userRecord.uid);
-
-                res.send({ deletedCount: result.deletedCount, firebaseDeleted: true });
-            } catch (error) {
-                console.error("Firebase deletion error:", error.message);
-                res.status(500).json({ error: 'Failed to delete user from Firebase.' });
-            }
-        });
-
-
-
         app.post('/teacherRequests', verifyFBToken, async (req, res) => {
             const request = req.body;
             const existing = await teacherRequestsCollection.findOne({ email: request.email });
@@ -976,11 +914,66 @@ async function run() {
         });
 
 
+        // register user
+        //duplication email is not save in database
+        app.post('/users', async (req, res) => {
+            const user = req.body;
 
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+            try {
+                // 👇 Check if user already exists by email
+                const existingUser = await usersCollection.findOne({ email: user.email });
+
+                if (existingUser) {
+                    return res.status(200).send({ message: 'User already exists', alreadyExists: true });
+                }
+
+                // 👇 If not exists, insert
+                const result = await usersCollection.insertOne(user);
+                res.status(201).send(result);
+            } catch (error) {
+                console.error('User insert error:', error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+        // app.post('/users', async (req, res) => {
+        //     const user = req.body;
+        //     const result = await usersCollection.insertOne(user);
+        //     res.send(result);
+        // });
+        app.get('/users', verifyFBToken, async (req, res) => {
+            const users = await usersCollection.find().sort({ created_at: -1 }).toArray();
+            res.send(users);
+        });
+        // app.delete('/users/:id', verifyFBToken, async (req, res) => {
+        //     const id = req.params.id;
+        //     const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+        //     res.send({ deletedCount: result.deletedCount });
+        // });
+        // user delete also firebase and mongoDB
+        app.delete('/users/:id', verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+            const email = req.query.email; // client must send the email (or uid)
+
+            try {
+                // Delete from MongoDB
+                const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+
+                // Then delete from Firebase Authentication
+                const userRecord = await admin.auth().getUserByEmail(email);
+                await admin.auth().deleteUser(userRecord.uid);
+
+                res.send({ deletedCount: result.deletedCount, firebaseDeleted: true });
+            } catch (error) {
+                console.error("Firebase deletion error:", error.message);
+                res.status(500).json({ error: 'Failed to delete user from Firebase.' });
+            }
+        });
+
+
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
-        // await client.close();
+
     }
 }
 run().catch(console.dir);
