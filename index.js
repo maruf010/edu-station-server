@@ -986,7 +986,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-    res.send('Edu Station is running by silkCity');
+    res.send('Edu Station is running by MARUF');
 });
 
 app.listen(port, () => {
