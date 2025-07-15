@@ -202,6 +202,7 @@ async function run() {
             try {
                 const submissions = await submissionsCollection
                     .find({ assignmentId })
+                    .sort({ submittedAt: -1 })
                     .toArray();
                 res.json(submissions);
             } catch (err) {
