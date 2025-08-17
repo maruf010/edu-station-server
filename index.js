@@ -1,6 +1,7 @@
 const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
+const nodemailer = require("nodemailer");
 const app = express();
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
@@ -95,7 +96,7 @@ async function run() {
             next();
         }
 
-        
+
 
         // Contact form API
         app.post("/api/contact", async (req, res) => {
@@ -1008,6 +1009,34 @@ async function run() {
             );
             res.send({ modifiedCount: result.modifiedCount });
         });
+
+
+        // Get single user by email
+        app.get('/users/:email', verifyFBToken, async (req, res) => {
+            const email = req.params.email;
+            const user = await usersCollection.findOne({ email });
+            if (!user) {
+                return res.status(404).send({ message: 'User not found' });
+            }
+            res.send(user);
+        });
+        // Update user info
+        app.put('/users/:email', verifyFBToken, async (req, res) => {
+            const email = req.params.email;
+            const updatedData = req.body;
+
+            try {
+                const result = await usersCollection.updateOne(
+                    { email },
+                    { $set: updatedData }
+                );
+                res.send(result);
+            } catch (error) {
+                console.error("User update error:", error);
+                res.status(500).send({ message: 'Internal server error' });
+            }
+        });
+
 
 
         // register user
