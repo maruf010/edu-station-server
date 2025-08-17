@@ -51,6 +51,8 @@ async function run() {
         const wishlistCollection = db.collection("wishlist");
         const assignmentsCollection = db.collection("assignments");
         const submissionsCollection = db.collection("submissions");
+        const notificationsCollection = client.db("edustationDB").collection("notifications");
+
 
 
         // Middleware to verify Firebase token
@@ -92,6 +94,100 @@ async function run() {
             }
             next();
         }
+
+        
+
+        // Contact form API
+        app.post("/api/contact", async (req, res) => {
+            const { name, email, phone, message } = req.body;
+
+            if (!name || !email || !phone || !message) {
+                return res.status(400).json({ error: "All fields are required" });
+            }
+
+            try {
+                const transporter = nodemailer.createTransport({
+                    service: "gmail",
+                    auth: {
+                        user: process.env.edu_email,
+                        pass: process.env.edu_email_pass
+                    }
+                });
+
+                const mailOptions = {
+                    from: `"${name}" <${email}>`, // এখানে ইউজারের email থাকবে
+                    to: process.env.edu_email,
+                    subject: "New Contact Form Submission",
+                    html: `
+                <h3>New Inquiry from Website</h3>
+                <p><strong>Name:</strong> ${name}</p>
+                <p><strong>Email:</strong> ${email}</p>
+                <p><strong>Phone:</strong> ${phone}</p>
+                <p><strong>Message:</strong><br/> ${message}</p>
+            `
+                };
+
+                await transporter.sendMail(mailOptions);
+                res.json({ success: true, message: "Message sent successfully!" });
+
+            } catch (error) {
+                console.error(error);
+                res.status(500).json({ error: "Failed to send message" });
+            }
+        });
+
+
+
+
+        app.post('/assignments', async (req, res) => {
+            try {
+                const assignment = req.body;
+                const result = await assignmentsCollection.insertOne(assignment);
+
+                // ✅ Notification insert
+                const notification = {
+                    type: 'assignment',
+                    classId: assignment.classId,
+                    assignmentId: result.insertedId,
+                    title: assignment.title,
+                    message: `New assignment created: ${assignment.title}`,
+                    createdAt: new Date(),
+                    read: false
+                };
+
+                await notificationsCollection.insertOne(notification);
+
+                res.send({ success: true, insertedId: result.insertedId });
+            } catch (error) {
+                res.status(500).send({ success: false, error: error.message });
+            }
+        });
+        app.get('/notifications', async (req, res) => {
+            try {
+                // 🔹 এখানে চাইলে email অনুযায়ী filter করতে পারো
+                const notifications = await notificationsCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(notifications);
+            } catch (error) {
+                res.status(500).send({ success: false, error: error.message });
+            }
+        });
+        app.patch('/notifications/:id/read', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const result = await notificationsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { read: true } }
+                );
+
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ success: false, error: error.message });
+            }
+        });
 
 
 
